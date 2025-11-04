@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Keystroke Logger</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 8px;
+      border: 1px solid #ccc;
+      text-align: center;
+    }
+    th {
+      background-color: #f0f0f0;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    textarea {
+      width: calc(100% - 20px);
+      height: 75px;
+      padding: 10px;
+      font-size: 16px;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: none;
+      overflow-y: auto;
+    }
+    .table-container {
+      max-height: 250px;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      margin-top: 10px;
+    }
+    .quote {
+      font-style: italic;
+      font-size: 18px;
+      color: #555;
+      margin-bottom: 8px;
+    }
+    .button-container {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.2s ease;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .chart-container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    canvas {
+      width: 100%;
+      height: 300px;
+      border: 1px solid #ccc;
+    }
+    .warning {
+      color: red;
+      font-size: 16px;
+      margin-top: 10px;
+    }
+  
+    .privacy {
+      background: #fff8db;
+      border: 1px solid #e0c200;
+      color: #5a4b00;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 10px 0 14px 0;
+    }
+</style>
+</head>
+<body>
+<h2>Keystroke Logger</h2><div class="privacy" id="privacyNotice">Notice: Avoid typing passwords or other highly sensitive personal information into this online form or any standard web form, unless it is an explicit field for a required password on a trusted, secure website.</div>
+<div class="quote">
+  Type two times the following text: <strong>she sells sea shells near the shore.</strong>
+</div>
+<textarea id="inputBox" placeholder="Type something..."></textarea>
+<div class="button-container">
+<button id="generatePlotsBtn">Generate Plots</button>
+</div>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>Key Order</th>
+<th>Key</th>
+<th>Down Time (ms)</th>
+<th>Up Time (ms)</th>
+<th>Hold Time (ms)</th>
+<th>Flight Time (ms)</th>
+<th>Digraph Time (ms)</th>
+<th>Trigraph Time (ms)</th>
+</tr>
+</thead>
+<tbody id="keystrokeTable">
+<!-- Captured keystrokes will appear here -->
+</tbody>
+</table>
+</div>
+<!-- Warning message -->
+<div class="warning" id="warning"></div>
+<div style="font-size:.95rem;line-height:1.4;margin:.5rem 0 1rem 0;">
+  <strong>How timings are calculated:</strong>
+  <ul style="margin:.25rem 0 0 1.2rem;">
+    <li><em>Hold</em>: <code>upTime − downTime</code> (same key)</li>
+    <li><em>Flight</em>: <code>downTime[i] − upTime[i−1]</code> (prev release → current press)</li>
+    <li><em>Digraph</em>: <code>downTime[i] − downTime[i−1]</code> (between consecutive presses)</li>
+    <li><em>Trigraph</em>: <code>downTime[i] − downTime[i−2]</code> (first → third press across three)</li>
+  </ul>
+</div>
+<!-- Charts -->
+<div class="chart-container">
+<canvas id="scatterPlot"></canvas>
+<canvas id="holdTimeHistogram"></canvas>
+</div>
+<script>
+  const table = document.getElementById('keystrokeTable');
+  const inputBox = document.getElementById('inputBox');
+  
+  const generatePlotsBtn = document.getElementById('generatePlotsBtn');
+  const warning = document.getElementById('warning');
+
+  let keyPressData = {};
+  let keyOrder = 0;
+  let lastReleaseTime = null;
+  let lastTwoPressTimes = [];
+  let lastThreePressTimes = [];
+  let pageLoadTime = performance.now();
+
+  let holdTimes = [];
+  let keys = [];
+  let charts = [];
+  let records = [];
+
+  // Allowed characters (includes space)
+  const allowedKeys = /^[a-zA-Z0-9\s]$/;
+
+  // ✅ Key down event
+  inputBox.addEventListener('keydown', (event) => {
+    const key = event.key;
+    const time = performance.now() - pageLoadTime;
+
+    if (allowedKeys.test(key) && !keyPressData[key]) {
+      keyPressData[key] = { downTime: time };
+
+      lastTwoPressTimes.push(time);
+      if (lastTwoPressTimes.length > 2) lastTwoPressTimes.shift();
+
+      lastThreePressTimes.push(time);
+      if (lastThreePressTimes.length > 3) lastThreePressTimes.shift();
+    }
+  });
+
+  // ✅ Key up event
+  inputBox.addEventListener('keyup', (event) => {
+    const key = event.key;
+    const time = performance.now() - pageLoadTime;
+
+    if (allowedKeys.test(key) && keyPressData[key] && !keyPressData[key].upTime) {
+      keyPressData[key].upTime = time;
+      keyPressData[key].holdTime = (time - keyPressData[key].downTime).toFixed(2);
+
+      keys.push(key);
+      holdTimes.push(Number(keyPressData[key].holdTime));
+
+      let flightTime = lastReleaseTime ? (keyPressData[key].downTime - lastReleaseTime).toFixed(2) : '-';
+      let digraphTime = lastTwoPressTimes.length === 2
+        ? (lastTwoPressTimes[1] - lastTwoPressTimes[0]).toFixed(2)
+        : '-';
+      let trigraphTime = lastThreePressTimes.length === 3
+        ? (lastThreePressTimes[2] - lastThreePressTimes[0]).toFixed(2)
+        : '-';
+
+      lastReleaseTime = keyPressData[key].upTime;
+
+            records.push({order: ++keyOrder, key, down: keyPressData[key].downTime.toFixed(2), up: keyPressData[key].upTime.toFixed(2), hold: keyPressData[key].holdTime, flight: flightTime, digraph: digraphTime, trigraph: trigraphTime});
+
+      delete keyPressData[key];
+    }
+  });
+
+  // Draw value labels on bars (no external plugins needed)
+  const barValueLabels = {
+    id: 'barValueLabels',
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      const data = chart.data.datasets[0].data;
+
+      ctx.save();
+      ctx.fillStyle = '#000';           // uses default; adjust if needed
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.font = '12px Arial';
+
+      meta.data.forEach((bar, i) => {
+        const value = data[i];
+        if (!value) return;             // skip zeros
+        const x = bar.x;
+        const y = bar.y - 2;            // a tiny offset above the bar
+        //const y = bar.y + (bar.base - bar.y) / 2;  // vertical center of bar
+        ctx.fillText(value, x, y);
+      });
+
+      ctx.restore();
+    }
+  };
+
+  // ✅ Generate plots button
+  generatePlotsBtn.addEventListener('click', () => {
+    // Rebuild arrays from the latest records
+    keys = records.map(r => r.key);
+    holdTimes = records.map(r => Number(r.hold));
+    
+    if (keys.length < 5) {
+      warning.textContent = 'Not enough data — at least 5 rows required to generate plots.';
+      return;
+    }
+    warning.textContent = '';
+    // Build table from recorded keystrokes
+    table.innerHTML = '';
+    records.forEach(r => {
+      const row = table.insertRow();
+      row.innerHTML = `
+        <td>${r.order}</td>
+        <td>${r.key}</td>
+        <td>${r.down}</td>
+        <td>${r.up}</td>
+        <td>${r.hold}</td>
+        <td>${r.flight}</td>
+        <td>${r.digraph}</td>
+        <td>${r.trigraph}</td>
+      `;
+    });
+
+
+    //charts.forEach(chart => chart.destroy());
+    charts.forEach(c => c && c.destroy && c.destroy());
+    charts = [];
+
+    // ✅ Scatterplot – Proper key-based mapping
+    charts.push(new Chart(document.getElementById('scatterPlot').getContext('2d'), {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: 'Hold Time per Letter',
+          data: keys.map((k, i) => ({ x: k, y: holdTimes[i] })),
+          backgroundColor: 'rgba(75, 192, 192, 1)',
+          pointRadius: 5
+        }]
+      },
+      options: {
+        scales: {
+          x: { type: 'category', labels: [...new Set(keys)] },
+          y: { title: { display: true, text: 'Hold Time (ms)' } }
+        }
+      }
+    }));
+
+    // ✅ Histogram – Proper hold time distribution
+    const bins = Array.from({ length: 12 }, (_, i) => i * 25);
+    const binCounts = bins.map(bin => holdTimes.filter(h => h >= bin && h < bin + 25).length);
+
+    charts.push(new Chart(document.getElementById('holdTimeHistogram').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: bins.map(bin => `${bin}-${bin + 25}`),
+        datasets: [{ data: binCounts }]
+      },
+      options: {
+        scales: {
+          x: { title: { display: true, text: 'Hold Time Ranges (ms)' } },
+          y: { title: { display: true, text: 'Frequency' }, beginAtZero: true }
+        },
+        plugins: {
+          legend: { display: false },
+          title: {
+            display: true,
+            text: 'Hold Time Distribution'
+          }
+        }
+      },
+      plugins: [barValueLabels]
+    }));
+  });
+</script>
+</body>
+</html>
